@@ -22,7 +22,8 @@ python supervised_training/train_relativerotation.py --stats_json="/home/richard
 
 In supervised_training/train_relativerotation.py:
 - model = DGCNNCls(num_class=4)
-- predictions = model(batch['rotated_pointcloud'].squeeze(1))
+- predicted_quaternions = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
+
 
 ## Dataset
 The dataset class file is here: supervised_training/dataset.py
@@ -40,7 +41,7 @@ batch['canonical_pointcloud']:
 - These are the pointclouds that are in the canonical/identity/stacked orientation. 
 The reason why the identity orientation pointclouds are stacked, is because each object's 
 identity orientation when loading into pyBullet is the stacked orientation. 
-After dropping the object randomly on the table, we log a new starting orientation in PyBullet.
+After dropping the object randomly on the table, we log a new starting orientation and 'rotated_pointcloud' in PyBullet.
 
 batch['rotated_quat']: 
 - These are the orientations of the above 'rotated_pointcloud' in PyBullet.
@@ -50,4 +51,8 @@ the regression target for our neural network is the *inverse* of this 'rotated_q
 -- R.from_quat(batch['rotated_quat']).inv()
 ```
 
+## Dataset Hyperparameters
+The default keyword arguments in supervised_training/dataset.py are the ones used in the paper, so there is no need to change the `max_shear` etc.
+
 ## Visualizing samples from dataset
+`helper_scripts/visualize_sample_pkl.py` is a template for reading the .pkl files in the samples folders.
