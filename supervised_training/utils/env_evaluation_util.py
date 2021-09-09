@@ -1,14 +1,9 @@
 import numpy
 import torch
-from bandu.utils import pb_util, vis_util, bandu_util
-from supervised_training.utils import surface_util, pointcloud_util, visualization_util
-from spinup.policies.handcrafted import handcrafted_policy1
+from supervised_training.utils import surface_util
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 import open3d
-from bandu.imports.QuaterNet.quaternion import qrot
-from deco import *
-
 
 def get_bti(batched_pointcloud,
             threshold_bottom_of_upper_region,

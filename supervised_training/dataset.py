@@ -6,6 +6,7 @@ import pandas as pd
 from bandu.utils import vis_util, mesh_util
 import open3d as o3d
 from supervised_training.utils.env_evaluation_util import get_bti_from_rotated
+import os
 from supervised_training.utils.pointcloud_util import *
 
 
@@ -200,14 +201,14 @@ class PointcloudDataset(Dataset):
             print(df_row)
             print(df_row['file_path'])
 
-        # import pdb
-        # pdb.set_trace()
         main_dict['bottom_thresholded_boolean'] = get_bti_from_rotated(farthest_point_sampled_pointcloud,
                                         resultant_quat, self.threshold_frac, self.linear_search,
                                                                        max_z=main_dict['canonical_max_height']*M_scale[2, 2],
                                                                        min_z=main_dict['canonical_min_height']*M_scale[2, 2],
                                                                        max_frac_threshold=self.max_frac_threshold).astype(float)
 
+        # import pdb
+        # pdb.set_trace()
         # 1-btb because 0s are contact points, 1s are background points
         assert np.sum(1-main_dict['bottom_thresholded_boolean']) >= 15, print(np.sum(1-main_dict['bottom_thresholded_boolean']))
 
