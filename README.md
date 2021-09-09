@@ -1,4 +1,4 @@
-(currently still modifying this, training not working yet)
+(Training working based off the below command)
 
 ## Installation
 1. Create new virtual env, and install from requirements.txt.
@@ -29,5 +29,17 @@ The dataset class file is here: supervised_training/dataset.py
 
 You can initialize each dataset by feeding in the path to the samples directory, e.g. 
 "/home/richard/Dropbox (MIT)/bandu_project_data/train/fps_randomizenoiseTrue_numfps10_samples"
+
+## Dataset Batch
+Each batch in the dataset is a dictionary with multiple values.
+
+```
+batch['rotated_pointcloud']: 
+- These are the pointclouds in the starting orientation, on the table.
+batch['canonical_pointcloud']: 
+- These are the pointclouds that are in the canonical/identity/stacked orientation. 
+The reason why the identity orientation pointclouds are stacked, is because each object's identity orientation when loading into pyBullet is the stacked orientation. 
+After dropping the object randomly on the table, we log a new starting orientation in PyBullet.
+```
 
 ## Visualizing samples from dataset

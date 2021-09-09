@@ -63,8 +63,8 @@ import torch
 
 torch.random.manual_seed(args.seed)
 
-import numpy
-numpy.random.seed(args.seed)
+import numpy as np
+np.random.seed(args.seed)
 
 import random
 random.seed(args.seed)
@@ -81,6 +81,8 @@ from supervised_training.dataset import PointcloudDataset
 
 from torch.utils.data import DataLoader
 from supervised_training.models.dgcnn_cls import DGCNNCls
+from scipy.spatial.transform import Rotation as R
+from bandu.utils import transform_util
 
 git_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode(("utf-8")).split("\n")[0]
 
@@ -185,19 +187,18 @@ for epoch in range(num_epochs):
             if batch_ndx * args.batch_size > MAX_VAL_SAMPLES:
                 break
 
-            # batch['rotated_pointcloud']: these are the pointclouds in the starting orientation, on the table
-
             # input: nB, nO, num_points, 3 -> nB, num_points, 3 -> nB, 3, num_points
 
             # output: -> nB, 4 (4 dimensional quaternion)
-            predictions = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
+            predicted_quaternions = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
 
-            # val_loss, val_diag_dict = get_loss_and_diag_dict(args.loss_str, loss_fnx, predictions, batch,
-            #                                                  increment_iteration=False)
+            predicted_rotation_matrices = transform_util.torch_quat2mat(predicted_quaternions)
+            val_loss = torch.mean((1/2) * torch.linalg.norm(predicted_rotation_matrices -
+                                                        torch.Tensor(R.from_quat(batch['rotated_quat']).inv().as_matrix()).to(predicted_rotation_matrices.device),
+                                                        dim=[-1, -2])**2)
 
-            import pdb
-            pdb.set_trace()
-            val_loss = predictions
+            print(f"\n\nln244 Validation loss: {val_loss}")
+
             val_diag_dict = dict()
 
             # wandb_dict = {"val/total_loss": val_loss.data.cpu().numpy(),
@@ -235,15 +236,15 @@ for epoch in range(num_epochs):
         if args.freeze_decoder:
             freeze(model.pointcloud_decoder)
 
-        predictions = model(batch)
+        predicted_quaternions = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
 
         optimizer.zero_grad()
 
-        # loss, diag_dict = get_loss_and_diag_dict(args.loss_str, loss_fnx, predictions, batch)
-
-        import pdb
-        pdb.set_trace()
-        loss = 0
+        predicted_rotation_matrices = transform_util.torch_quat2mat(predicted_quaternions)
+        loss = torch.mean((1/2) * torch.linalg.norm(predicted_rotation_matrices -
+                                                        torch.Tensor(R.from_quat(batch['rotated_quat']).inv().as_matrix()).to(predicted_rotation_matrices.device),
+                                                        dim=[-1, -2])**2)
+        print(f"\n\nln244 Training loss: {loss}")
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
