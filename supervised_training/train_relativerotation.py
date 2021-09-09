@@ -185,7 +185,12 @@ for epoch in range(num_epochs):
             if batch_ndx * args.batch_size > MAX_VAL_SAMPLES:
                 break
 
-            predictions = model(batch)
+            # batch['rotated_pointcloud']: these are the pointclouds in the starting orientation, on the table
+
+            # input: nB, nO, num_points, 3 -> nB, num_points, 3 -> nB, 3, num_points
+
+            # output: -> nB, 4 (4 dimensional quaternion)
+            predictions = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
 
             # val_loss, val_diag_dict = get_loss_and_diag_dict(args.loss_str, loss_fnx, predictions, batch,
             #                                                  increment_iteration=False)
