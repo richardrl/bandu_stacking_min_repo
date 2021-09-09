@@ -194,12 +194,12 @@ class PointcloudDataset(Dataset):
         # add object dimension for solo object
         main_dict['rotated_pointcloud'] = np.expand_dims(farthest_point_sampled_pointcloud, axis=0).astype(float)
 
-        with pd.option_context('display.max_rows', None,
-                               'display.max_columns', None,
-                               'display.precision', 3,
-                               ):
-            print(df_row)
-            print(df_row['file_path'])
+        # with pd.option_context('display.max_rows', None,
+        #                        'display.max_columns', None,
+        #                        'display.precision', 3,
+        #                        ):
+            # print(df_row)
+            # print(df_row['file_path'])
 
         main_dict['bottom_thresholded_boolean'] = get_bti_from_rotated(farthest_point_sampled_pointcloud,
                                         resultant_quat, self.threshold_frac, self.linear_search,
