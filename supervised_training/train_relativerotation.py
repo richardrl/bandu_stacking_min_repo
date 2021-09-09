@@ -236,7 +236,9 @@ for epoch in range(num_epochs):
 
         # loss, diag_dict = get_loss_and_diag_dict(args.loss_str, loss_fnx, predictions, batch)
 
-
+        import pdb
+        pdb.set_trace()
+        loss = 0
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
