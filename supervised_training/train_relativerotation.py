@@ -179,7 +179,7 @@ for epoch in range(num_epochs):
     # if epoch > 0 and epoch % args.evaluation_freq == 0:
     #     cgc.assert_computation_graph_same_size(loss, next(iter(models_dict.items()))[1].named_parameters())
 
-    if epoch % args.evaluation_freq == 0:
+    if epoch % args.evaluation_freq == 0 and epoch > 0:
         # if args.val_initconfig:
             # eval loop
         model.eval()
