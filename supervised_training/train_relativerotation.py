@@ -197,7 +197,7 @@ for epoch in range(num_epochs):
 
             predicted_rotation_matrices = transform_util.torch_quat2mat(predicted_quaternions)
             val_loss = torch.mean((1/2) * torch.linalg.norm(predicted_rotation_matrices -
-                                                        torch.Tensor(R.from_quat(batch['relative_quat']).as_matrix()).to(predictions.device),
+                                                        torch.Tensor(R.from_quat(batch['relative_quat']).as_matrix()).to(predicted_rotation_matrices.device),
                                                         dim=[-1, -2])**2)
 
             print(f"\n\nln244 Validation loss: {val_loss}")
