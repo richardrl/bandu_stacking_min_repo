@@ -63,7 +63,8 @@ class PointcloudDataset(Dataset):
                  stats_dic=None,
                  center_fps_pc=False,
                  linear_search=True,
-                 max_frac_threshold=.1):
+                 max_frac_threshold=.1,
+                 randomize_z_canonical=True):
         self.data_df = read_data_dir(data_dir)
         self.data_dir = data_dir
         self.scale_aug = scale_aug
@@ -81,6 +82,7 @@ class PointcloudDataset(Dataset):
 
         self.linear_search = linear_search
         self.max_frac_threshold = max_frac_threshold
+        self.randomize_z_canonical = randomize_z_canonical
 
     def __len__(self):
         # returns number of rows in dataframe
@@ -212,7 +214,16 @@ class PointcloudDataset(Dataset):
         # 1-btb because 0s are contact points, 1s are background points
         assert np.sum(1-main_dict['bottom_thresholded_boolean']) >= 15, print(np.sum(1-main_dict['bottom_thresholded_boolean']))
 
-        main_dict['canonical_pointcloud'] = R.from_quat(resultant_quat).inv().apply(farthest_point_sampled_pointcloud)
+        if self.randomize_z_canonical:
+            canonical_quat = R.from_euler("z", np.random.uniform(0, 2*np.pi)).as_quat()
+            main_dict['canonical_quat'] = canonical_quat
+
+            # undo the quat to get into canonical position, then apply the canonical rotation
+            main_dict['relative_quat'] = (R.from_quat(canonical_quat) * R.from_quat(resultant_quat).inv()).as_quat()
+            main_dict['canonical_pointcloud'] = R.from_quat(main_dict['relative_quat']).apply(farthest_point_sampled_pointcloud)
+        else:
+            main_dict['relative_quat'] = R.from_quat(resultant_quat).inv().as_quat()
+            main_dict['canonical_pointcloud'] = R.from_quat(main_dict['relative_quat']).apply(farthest_point_sampled_pointcloud)
 
         if self.stats_dic:
             main_dict.update({k: np.expand_dims(np.array(v), 0) for k, v in self.stats_dic.items()})

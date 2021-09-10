@@ -58,6 +58,7 @@ parser.add_argument('--no_linear_search', action='store_false', help='Use linear
 
 parser.add_argument('--threshold_frac',type=float, default=.02, help='Fraction of points to use for plane label generation')
 parser.add_argument('--max_frac_threshold', type=float, default=.1)
+parser.add_argument('--randomize_z_canonical', action='store_true')
 args = parser.parse_args()
 import torch
 
@@ -163,14 +164,16 @@ train_dset = PointcloudDataset(args.train_dset_path,
                                center_fps_pc=args.center_fps_pc,
                                linear_search=args.no_linear_search,
                                threshold_frac=args.threshold_frac,
-                               max_frac_threshold=args.max_frac_threshold)
+                               max_frac_threshold=args.max_frac_threshold,
+                               randomize_z_canonical=args.randomize_z_canonical)
 
 val_dset = PointcloudDataset(args.val_dset_path,
                             stats_dic=stats_dic,
                              center_fps_pc=args.center_fps_pc,
                              linear_search=args.no_linear_search,
                              threshold_frac=args.threshold_frac,
-                             max_frac_threshold=args.max_frac_threshold)
+                             max_frac_threshold=args.max_frac_threshold,
+                             randomize_z_canonical=args.randomize_z_canonical)
 train_dloader = DataLoader(train_dset, pin_memory=True, batch_size=args.batch_size, drop_last=True, shuffle=True)
 val_dloader = DataLoader(val_dset, pin_memory=True, batch_size=args.batch_size, drop_last=True, shuffle=True)
 
@@ -194,7 +197,7 @@ for epoch in range(num_epochs):
 
             predicted_rotation_matrices = transform_util.torch_quat2mat(predicted_quaternions)
             val_loss = torch.mean((1/2) * torch.linalg.norm(predicted_rotation_matrices -
-                                                        torch.Tensor(R.from_quat(batch['rotated_quat']).inv().as_matrix()).to(predicted_rotation_matrices.device),
+                                                        torch.Tensor(R.from_quat(batch['relative_quat']).as_matrix()).to(predictions.device),
                                                         dim=[-1, -2])**2)
 
             print(f"\n\nln244 Validation loss: {val_loss}")
@@ -242,8 +245,8 @@ for epoch in range(num_epochs):
 
         predicted_rotation_matrices = transform_util.torch_quat2mat(predicted_quaternions)
         loss = torch.mean((1/2) * torch.linalg.norm(predicted_rotation_matrices -
-                                                        torch.Tensor(R.from_quat(batch['rotated_quat']).inv().as_matrix()).to(predicted_rotation_matrices.device),
-                                                        dim=[-1, -2])**2)
+                                                    torch.Tensor(R.from_quat(batch['relative_quat']).as_matrix()).to(predicted_rotation_matrices.device),
+                                                    dim=[-1, -2])**2)
         print(f"\n\nln244 Training loss: {loss}")
         loss.backward()
 

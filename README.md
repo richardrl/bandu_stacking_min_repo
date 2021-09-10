@@ -15,7 +15,7 @@ num_points: number of points in pointcloud
 1. Example (replace the last two paths with the paths to your training and test samples folder):
 ```$xslt
 
-python supervised_training/train_relativerotation.py --stats_json="/home/richard/Dropbox (MIT)/bandu_project_data/train/fps_randomizenoiseTrue_numfps10_samples/rr_pn_stats.json" "/home/richard/Dropbox (MIT)/bandu_project_data/train/fps_randomizenoiseTrue_numfps10_samples"  "/home/richard/Dropbox (MIT)/bandu_project_data/train/fps_randomizenoiseTrue_numfps10_samples"
+python supervised_training/train_relativerotation.py --randomize_z_canonical --stats_json="/home/richard/Dropbox (MIT)/bandu_project_data/train/fps_randomizenoiseTrue_numfps10_samples/rr_pn_stats.json" "/home/richard/Dropbox (MIT)/bandu_project_data/train/fps_randomizenoiseTrue_numfps10_samples"  "/home/richard/Dropbox (MIT)/bandu_project_data/train/fps_randomizenoiseTrue_numfps10_samples"
 ```
 
 2. Changing or utilizing the following lines should be necessary for implementing implicit PDF:
