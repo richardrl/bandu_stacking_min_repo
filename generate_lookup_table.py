@@ -10,11 +10,11 @@ import utils_bingham
 
 
 def generate_bd_lookup_table():
-    coords = np.linspace(-50, 0, 4)
+    coords = np.linspace(-500, 0, 40)
     duration = time.time()
     utils_bingham.build_bd_lookup_table(
-        "uniform", {"coords": coords, "bounds": (-50, 0), "num_points": 4},
-        "precomputed/lookup_-50_0_4.dill")
+        "uniform", {"coords": coords, "bounds": (-500, 0), "num_points": 40},
+        "precomputed/lookup_-500_0_40.dill")
 
     duration = time.time() - duration
 

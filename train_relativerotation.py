@@ -182,7 +182,7 @@ train_dloader = DataLoader(train_dset, pin_memory=True, batch_size=args.batch_si
 val_dloader = DataLoader(val_dset, pin_memory=True, batch_size=args.batch_size, drop_last=True, shuffle=True)
 
 
-loss_fn = BinghamLoss('precomputed/lookup_-50_0_4.dill')  # FILL IN
+loss_fn = BinghamLoss('precomputed/lookup_-500_0_40.dill')
 
 
 for epoch in range(num_epochs):
@@ -210,10 +210,10 @@ for epoch in range(num_epochs):
                                                         dim=[-1, -2])**2)
             '''
             # output: -> nB, 19
-            predicted_dist = model(batch['rotated_pointcloud'].squeeze(1))
+            predicted_dist = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
             optimizer.zero_grad()
 
-            val_loss, log_likelihood = loss_fn(batch['relative_quat'], predicted_dist)
+            val_loss, log_likelihood = loss_fn(batch['relative_quat'].float(), predicted_dist.float())
 
             print(f"\n\nln244 Validation loss: {val_loss}")
 
@@ -264,10 +264,10 @@ for epoch in range(num_epochs):
                                                     torch.Tensor(R.from_quat(batch['relative_quat']).as_matrix()).to(predicted_rotation_matrices.device),
                                                     dim=[-1, -2])**2)
         '''
-        predicted_dist = model(batch['rotated_pointcloud'].squeeze(1))
+        predicted_dist = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
         optimizer.zero_grad()
 
-        loss, log_likelihood = loss_fn(batch['relative_quat'], predicted_dist)
+        loss, log_likelihood = loss_fn(batch['relative_quat'].float(), predicted_dist.float())
 
         print(f"\n\nln244 Training loss: {loss}")
         loss.backward()
