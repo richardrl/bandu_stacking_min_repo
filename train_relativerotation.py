@@ -87,6 +87,8 @@ from supervised_training.models.dgcnn_cls import DGCNNCls
 from scipy.spatial.transform import Rotation as R
 from bandu.utils import transform_util
 
+from bingham_loss import BinghamLoss
+
 git_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode(("utf-8")).split("\n")[0]
 
 if args.detect_anomaly:
@@ -109,7 +111,7 @@ if args.detect_anomaly:
 #
 # model = next(iter(models_dict.items()))[1]
 
-model = DGCNNCls(num_class=4,
+model = DGCNNCls(num_class=19,  # Changed to 19 for Bingham loss
                  )
 
 # if model.multi_gpu:
@@ -179,6 +181,10 @@ val_dset = PointcloudDataset(args.val_dset_path,
 train_dloader = DataLoader(train_dset, pin_memory=True, batch_size=args.batch_size, drop_last=True, shuffle=True)
 val_dloader = DataLoader(val_dset, pin_memory=True, batch_size=args.batch_size, drop_last=True, shuffle=True)
 
+
+loss_fn = BinghamLoss('precomputed/lookup_-50_0_4.dill')  # FILL IN
+
+
 for epoch in range(num_epochs):
     print(f"ln73 Epoch {epoch}")
     # if epoch > 0 and epoch % args.evaluation_freq == 0:
@@ -194,6 +200,7 @@ for epoch in range(num_epochs):
 
             # input: nB, nO, num_points, 3 -> nB, num_points, 3 -> nB, 3, num_points
 
+            '''
             # output: -> nB, 4 (4 dimensional quaternion)
             predicted_quaternions = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
 
@@ -201,6 +208,12 @@ for epoch in range(num_epochs):
             val_loss = torch.mean((1/2) * torch.linalg.norm(predicted_rotation_matrices -
                                                         torch.Tensor(R.from_quat(batch['relative_quat']).as_matrix()).to(predicted_rotation_matrices.device),
                                                         dim=[-1, -2])**2)
+            '''
+            # output: -> nB, 19
+            predicted_dist = model(batch['rotated_pointcloud'].squeeze(1))
+            optimizer.zero_grad()
+
+            val_loss, log_likelihood = loss_fn(batch['relative_quat'], predicted_dist)
 
             print(f"\n\nln244 Validation loss: {val_loss}")
 
@@ -241,6 +254,7 @@ for epoch in range(num_epochs):
         if args.freeze_decoder:
             freeze(model.pointcloud_decoder)
 
+        '''
         predicted_quaternions = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
 
         optimizer.zero_grad()
@@ -249,6 +263,12 @@ for epoch in range(num_epochs):
         loss = torch.mean((1/2) * torch.linalg.norm(predicted_rotation_matrices -
                                                     torch.Tensor(R.from_quat(batch['relative_quat']).as_matrix()).to(predicted_rotation_matrices.device),
                                                     dim=[-1, -2])**2)
+        '''
+        predicted_dist = model(batch['rotated_pointcloud'].squeeze(1))
+        optimizer.zero_grad()
+
+        loss, log_likelihood = loss_fn(batch['relative_quat'], predicted_dist)
+
         print(f"\n\nln244 Training loss: {loss}")
         loss.backward()
 
