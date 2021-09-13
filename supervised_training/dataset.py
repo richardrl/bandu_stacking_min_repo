@@ -108,6 +108,7 @@ class PointcloudDataset(Dataset):
         fp = df_row['file_path']
         main_dict = torch.load(fp)
 
+        main_dict = {k: v.astype(np.float32) for k, v in main_dict.items()}
 
         # fps_pc = get_farthest_point_sampled_pointcloud(main_dict['rotated_pointcloud'],
         #                                                                         2048)
@@ -119,7 +120,7 @@ class PointcloudDataset(Dataset):
             farthest_point_sampled_pointcloud = farthest_point_sampled_pointcloud - main_dict['position']
 
         # augmentations and generations
-        M = np.eye(3)
+        M = np.eye(3, dtype=np.float32)
 
         # aug 1: scale
         if self.scale_aug == "xyz":
@@ -162,13 +163,13 @@ class PointcloudDataset(Dataset):
             farthest_point_sampled_pointcloud = aug_rot.apply(farthest_point_sampled_pointcloud)
 
             # save rotation
-            resultant_quat = (aug_rot * R.from_quat(np.array(main_dict['rotated_quat']))).as_quat()
+            resultant_quat = (aug_rot * R.from_quat(np.array(main_dict['rotated_quat']))).as_quat().astype(np.float32)
             main_dict['rotated_quat'] = resultant_quat
             # rotated_quats[sample_idx, 0] = resultant_quat
         elif self.rot_aug == "xyz":
             aug_rot = R.random()
             farthest_point_sampled_pointcloud = aug_rot.apply(farthest_point_sampled_pointcloud)
-            resultant_quat = (aug_rot * R.from_quat(np.array(main_dict['rotated_quat']))).as_quat()
+            resultant_quat = (aug_rot * R.from_quat(np.array(main_dict['rotated_quat']))).as_quat().astype(np.float32)
             main_dict['rotated_quat'] = resultant_quat
         else:
             assert self.rot_aug is None
@@ -214,7 +215,7 @@ class PointcloudDataset(Dataset):
         # return (before_aug_fps_pc, resultant_quat, fps_pc, fps_normals_transformed)
 
         # add object dimension for solo object
-        main_dict['rotated_pointcloud'] = np.expand_dims(farthest_point_sampled_pointcloud, axis=0).astype(float)
+        main_dict['rotated_pointcloud'] = np.expand_dims(farthest_point_sampled_pointcloud, axis=0).astype(np.float32)
 
         # with pd.option_context('display.max_rows', None,
         #                        'display.max_columns', None,
@@ -228,20 +229,20 @@ class PointcloudDataset(Dataset):
                                                                            resultant_quat, self.threshold_frac, self.linear_search,
                                                                            max_z=main_dict['canonical_max_height']*M_scale[2, 2],
                                                                            min_z=main_dict['canonical_min_height']*M_scale[2, 2],
-                                                                           max_frac_threshold=self.max_frac_threshold).astype(float)
+                                                                           max_frac_threshold=self.max_frac_threshold).astype(np.float32)
             assert np.sum(1-main_dict['bottom_thresholded_boolean']) >= 15, print(np.sum(1-main_dict['bottom_thresholded_boolean']))
 
         # 1-btb because 0s are contact points, 1s are background points
 
         if self.randomize_z_canonical:
-            canonical_quat = R.from_euler("z", np.random.uniform(0, 2*np.pi)).as_quat()
+            canonical_quat = R.from_euler("z", np.random.uniform(0, 2*np.pi)).as_quat().astype(np.float32)
             main_dict['canonical_quat'] = canonical_quat
 
             # undo the quat to get into canonical position, then apply the canonical rotation
-            main_dict['relative_quat'] = (R.from_quat(canonical_quat) * R.from_quat(resultant_quat).inv()).as_quat()
+            main_dict['relative_quat'] = (R.from_quat(canonical_quat) * R.from_quat(resultant_quat).inv()).as_quat().astype(np.float32)
             main_dict['canonical_pointcloud'] = R.from_quat(main_dict['relative_quat']).apply(farthest_point_sampled_pointcloud)
         else:
-            main_dict['relative_quat'] = R.from_quat(resultant_quat).inv().as_quat()
+            main_dict['relative_quat'] = R.from_quat(resultant_quat).inv().as_quat().astype(np.float32)
             main_dict['canonical_pointcloud'] = R.from_quat(main_dict['relative_quat']).apply(farthest_point_sampled_pointcloud)
 
         if self.stats_dic:
