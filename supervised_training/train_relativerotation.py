@@ -1,7 +1,7 @@
-MAX_TRAIN_SAMPLES_PER_EPOCH = 2000
-MAX_VAL_SAMPLES = 200
-
 import argparse
+import time
+from ipdf import models as ipdf_models
+from ipdf import train as ipdf_train
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--device_id', default=1)
@@ -11,7 +11,7 @@ parser.add_argument('--resume_pkl', type=str, help="Checkpoint to resume from")
 parser.add_argument('--load_optim', action='store_true')
 parser.add_argument('--lr', type=float, default=0.0003)
 parser.add_argument('--kld_weight', type=float, default=.00001)
-parser.add_argument('--batch_size', type=int, default=8)
+# parser.add_argument('--batch_size', type=int, default=8)
 parser.add_argument('--checkpoint_freq', type=int, default=1)
 parser.add_argument('--evaluation_freq', type=int, default=1, help="Evaluate every n epochs")
 parser.add_argument('--augment_mesh_freq', type=int, default=100)
@@ -61,6 +61,22 @@ parser.add_argument('--max_frac_threshold', type=float, default=.1)
 parser.add_argument('--randomize_z_canonical', action='store_true')
 parser.add_argument('--dont_make_btb', action='store_true')
 
+parser.add_argument('--num_epochs', type=int, default=100_000)
+parser.add_argument('--max_train_samples_per_epoch', type=int, default=2_000)
+parser.add_argument('--max_val_samples', type=int, default=200)
+
+parser.add_argument("--batch_size_train", type=int, default=32)
+parser.add_argument("--batch_size_eval", type=int, default=32)
+
+parser.add_argument("--num_queries_train", type=int, default=256,
+                    help="number of random queries per input during training, or recursion level for grid.")
+# Eval is always on a grid; recursion level 2 corresponds to ~4k points.
+parser.add_argument("--num_queries_eval", type=int, default=2,
+                    help="see `num_queries_train`.")
+parser.add_argument("--query_sampling_mode", default='random',
+                    choices=['random', 'grid'],
+                    help="how to sample rotation queries.")
+
 args = parser.parse_args()
 import torch
 
@@ -87,7 +103,7 @@ from supervised_training.models.dgcnn_cls import DGCNNCls
 from scipy.spatial.transform import Rotation as R
 from bandu.utils import transform_util
 
-git_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode(("utf-8")).split("\n")[0]
+# git_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode(("utf-8")).split("\n")[0]
 
 if args.detect_anomaly:
     torch.autograd.set_detect_anomaly(True)
@@ -108,9 +124,9 @@ if args.detect_anomaly:
 #                             device_id=args.device_id)
 #
 # model = next(iter(models_dict.items()))[1]
-
-model = DGCNNCls(num_class=4,
-                 )
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+model = DGCNNCls(num_class=256).to(device)
+ipdf = ipdf_models.ImplicitPDF(feature_size=256).to(device)
 
 # if model.multi_gpu:
 #     model.gpu_0 = torch.device(f"cuda:{args.gpu0}")
@@ -119,21 +135,23 @@ model = DGCNNCls(num_class=4,
 if args.resume_pkl:
     pkl = torch.load(args.resume_pkl)
     random_sd = model.state_dict()
-
     random_sd.update(pkl['model'])
     model.load_state_dict(random_sd)
 
+    ipdf_sd = model.state_dict()
+    ipdf_sd.update(pkl['ipdf'])
+    ipdf.load_state_dict(ipdf_sd)
+
+
 MODEL_DEVICE = next(model.parameters()).device
 
-optimizer = torch.optim.Adam(model.parameters(),
+optimizer = torch.optim.Adam(list(model.parameters()) +
+                             list(ipdf.parameters()),
                              lr=args.lr)
 
 if args.resume_pkl and args.load_optim:
     pkl = torch.load(args.resume_pkl)
     optimizer.load_state_dict(pkl['opt'])
-
-num_epochs = 100000
-
 
 # if args.enable_scheduler:
 #     scheduler = get_linear_schedule_with_warmup(optimizer, args.num_warmup_steps, args.num_training_steps)
@@ -157,7 +175,7 @@ def freeze(module):
 
 def unfreeze(module):
     for param in module.parameters():
-        param.requires_grad = False
+        param.requires_grad = True
 
 below_freeze_threshold_count = 0
 
@@ -170,17 +188,22 @@ train_dset = PointcloudDataset(args.train_dset_path,
                                randomize_z_canonical=args.randomize_z_canonical)
 
 val_dset = PointcloudDataset(args.val_dset_path,
-                            stats_dic=stats_dic,
+                             stats_dic=stats_dic,
                              center_fps_pc=args.center_fps_pc,
                              linear_search=args.no_linear_search,
                              threshold_frac=args.threshold_frac,
                              max_frac_threshold=args.max_frac_threshold,
                              randomize_z_canonical=args.randomize_z_canonical)
-train_dloader = DataLoader(train_dset, pin_memory=True, batch_size=args.batch_size, drop_last=True, shuffle=True)
-val_dloader = DataLoader(val_dset, pin_memory=True, batch_size=args.batch_size, drop_last=True, shuffle=True)
+train_dloader = DataLoader(train_dset, pin_memory=True, batch_size=args.batch_size_train, drop_last=True, shuffle=True)
+val_dloader = DataLoader(val_dset, pin_memory=True, batch_size=args.batch_size_eval, drop_last=True, shuffle=True)
 
-for epoch in range(num_epochs):
-    print(f"ln73 Epoch {epoch}")
+def batch_to_device(batch, device):
+    return {k: (v.to(device))
+            for k, v in batch.items()}
+
+start = time.time()
+for epoch in range(args.num_epochs):
+    print(f"Epoch {epoch}")
     # if epoch > 0 and epoch % args.evaluation_freq == 0:
     #     cgc.assert_computation_graph_same_size(loss, next(iter(models_dict.items()))[1].named_parameters())
 
@@ -188,21 +211,41 @@ for epoch in range(num_epochs):
         # if args.val_initconfig:
             # eval loop
         model.eval()
+        ipdf.eval()
         for batch_ndx, batch in enumerate(val_dloader):
-            if batch_ndx * args.batch_size > MAX_VAL_SAMPLES:
+            if batch_ndx * args.batch_size_eval > args.max_val_samples:
                 break
+            batch = batch_to_device(batch, MODEL_DEVICE)
 
             # input: nB, nO, num_points, 3 -> nB, num_points, 3 -> nB, 3, num_points
 
             # output: -> nB, 4 (4 dimensional quaternion)
-            predicted_quaternions = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
+            with torch.no_grad():
+                feature = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
+                # get GT rotation matrix
+                gt_pose = transform_util.torch_quat2mat(batch['relative_quat'])
+                queries = ipdf_models.generate_queries(
+                    num_queries=args.num_queries_eval,
+                    mode='grid',
+                    rotate_to=torch.eye(3, device=device)[None])
+                pdf, pmf = ipdf.compute_pdf(feature, queries)
+                # Take likelihood of closest point to ground truth.
+                closest = ipdf_train.find_closest_rotations(queries[0], gt_pose)
+                pdf_closest = pdf[torch.arange(pdf.shape[0]), closest]
+                val_log_likelihood = torch.log(pdf_closest).mean().item()
 
-            predicted_rotation_matrices = transform_util.torch_quat2mat(predicted_quaternions)
-            val_loss = torch.mean((1/2) * torch.linalg.norm(predicted_rotation_matrices -
-                                                        torch.Tensor(R.from_quat(batch['relative_quat']).as_matrix()).to(predicted_rotation_matrices.device),
-                                                        dim=[-1, -2])**2)
+                # Save figures for elements of the first batch.
+                if batch_ndx == 0:
+                    for i in range(3):
+                      ipdf_train.save_figure(
+                          path=f'/tmp/eval_ipdf_{i}_e{epoch}_b{batch_ndx:04d}.png',
+                          queries=queries[0].cpu(),
+                          pmf=pmf[i].cpu(),
+                          gt=gt_pose[i].cpu())
 
-            print(f"\n\nln244 Validation loss: {val_loss}")
+            print(f"elapsed {time.time()-start:.2f}s. "
+                  f"epoch {epoch}. step {batch_ndx}/{len(val_dloader)}. "
+                  f"val log likelihood: {val_log_likelihood:.2f}")
 
             val_diag_dict = dict()
 
@@ -217,22 +260,25 @@ for epoch in range(num_epochs):
             #                       )
 
             # wandb.log(wandb_dict, step=total_iteration)
-        model.train()
+    model.train()
+    ipdf.train()
+
     if epoch % args.checkpoint_freq == 0:
         dic = dict(model=model.state_dict(),
-                   opt=optimizer.state_dict(),
-                   )
+                   ipdf=ipdf.state_dict(),
+                   opt=optimizer.state_dict())
         # if args.enable_scheduler:
         #     dic['scheduler_get_lr'] = scheduler.get_lr()
-        # torch.save(dic, os.path.join(wandb.run.dir, f"{wandb.run.name}_checkpoint{epoch}"))
+        torch.save(dic, f'/tmp/bandu_ipdf_ckpt_e{epoch}')
 
         # print("ln177 checkpoint path")
         # print(os.path.join(wandb.run.dir, f"checkpoint{epoch}"))
 
     # for iter_ in range(100):
     for batch_ndx, batch in enumerate(train_dloader):
-        if batch_ndx * args.batch_size > MAX_TRAIN_SAMPLES_PER_EPOCH:
+        if batch_ndx * args.batch_size_train > args.max_train_samples_per_epoch:
             break
+        batch = batch_to_device(batch, MODEL_DEVICE)
 
         if args.freeze_encoder:
             freeze(model.pointcloud_encoder)
@@ -241,15 +287,19 @@ for epoch in range(num_epochs):
         if args.freeze_decoder:
             freeze(model.pointcloud_decoder)
 
-        predicted_quaternions = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
-
         optimizer.zero_grad()
 
-        predicted_rotation_matrices = transform_util.torch_quat2mat(predicted_quaternions)
-        loss = torch.mean((1/2) * torch.linalg.norm(predicted_rotation_matrices -
-                                                    torch.Tensor(R.from_quat(batch['relative_quat']).as_matrix()).to(predicted_rotation_matrices.device),
-                                                    dim=[-1, -2])**2)
-        print(f"\n\nln244 Training loss: {loss}")
+        gt_pose = transform_util.torch_quat2mat(batch['relative_quat'])
+        feature = model(batch['rotated_pointcloud'].squeeze(1).permute(0, 2, 1))
+        queries = ipdf_models.generate_queries(num_queries=args.num_queries_train,
+                                               mode=args.query_sampling_mode,
+                                               rotate_to=gt_pose)
+        pdf, pmf = ipdf.compute_pdf(feature, queries)
+        loss = -torch.log(pdf[:, -1]).mean()
+
+        print(f"elapsed {time.time()-start:.2f}s. "
+              f"epoch {epoch}. step {batch_ndx}/{len(train_dloader)}. "
+              f"train loss: {loss:.2f}.")
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
