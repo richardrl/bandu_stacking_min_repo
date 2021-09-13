@@ -138,7 +138,7 @@ if args.resume_pkl:
     random_sd.update(pkl['model'])
     model.load_state_dict(random_sd)
 
-    ipdf_sd = model.state_dict()
+    ipdf_sd = ipdf.state_dict()
     ipdf_sd.update(pkl['ipdf'])
     ipdf.load_state_dict(ipdf_sd)
 

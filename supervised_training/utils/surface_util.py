@@ -171,7 +171,9 @@ def get_relative_rotation_from_hot_labels(rotated_pointcloud,
 
     # since the hot labels == 1 means we have a BACKGROUND point, to get the surface points we must invert it
 
-    surface_points = rotated_pointcloud[(~(hot_labels.bool())).byte()]
+    # CHECKME! removing byte() to avoid warning
+    # surface_points = rotated_pointcloud[(~(hot_labels.bool())).byte()]
+    surface_points = rotated_pointcloud[~(hot_labels.bool())]
 
     # mc1 = make_colors(hot_labels)
     # geoms_to_draw = [
