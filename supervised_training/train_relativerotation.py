@@ -62,6 +62,7 @@ parser.add_argument('--randomize_z_canonical', action='store_true')
 parser.add_argument('--dont_make_btb', action='store_true')
 
 parser.add_argument('--num_epochs', type=int, default=100_000)
+parser.add_argument('--first_epoch', type=int, default=0)
 parser.add_argument('--max_train_samples_per_epoch', type=int, default=2_000)
 parser.add_argument('--max_val_samples', type=int, default=200)
 
@@ -76,6 +77,11 @@ parser.add_argument("--num_queries_eval", type=int, default=2,
 parser.add_argument("--query_sampling_mode", default='random',
                     choices=['random', 'grid'],
                     help="how to sample rotation queries.")
+parser.add_argument("--num_layers", type=int, default=2,
+                    help="Number of IPDF MLP layers.")
+
+parser.add_argument("--run_id", type=str, default='',
+                    help="Identifier for this run.")
 
 args = parser.parse_args()
 import torch
@@ -126,7 +132,8 @@ if args.detect_anomaly:
 # model = next(iter(models_dict.items()))[1]
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 model = DGCNNCls(num_class=256).to(device)
-ipdf = ipdf_models.ImplicitPDF(feature_size=256).to(device)
+ipdf = ipdf_models.ImplicitPDF(feature_size=256,
+                               num_layers=args.num_layers).to(device)
 
 # if model.multi_gpu:
 #     model.gpu_0 = torch.device(f"cuda:{args.gpu0}")
@@ -194,15 +201,27 @@ val_dset = PointcloudDataset(args.val_dset_path,
                              threshold_frac=args.threshold_frac,
                              max_frac_threshold=args.max_frac_threshold,
                              randomize_z_canonical=args.randomize_z_canonical)
-train_dloader = DataLoader(train_dset, pin_memory=True, batch_size=args.batch_size_train, drop_last=True, shuffle=True)
-val_dloader = DataLoader(val_dset, pin_memory=True, batch_size=args.batch_size_eval, drop_last=True, shuffle=True)
+
+train_dloader = DataLoader(train_dset,
+                           pin_memory=True,
+                           batch_size=args.batch_size_train,
+                           drop_last=True,
+                           shuffle=True,
+                           num_workers=8)
+val_dloader = DataLoader(val_dset,
+                         pin_memory=True,
+                         batch_size=args.batch_size_eval,
+                         drop_last=True,
+                         shuffle=True,
+                         num_workers=8)
 
 def batch_to_device(batch, device):
     return {k: (v.to(device))
             for k, v in batch.items()}
 
+
 start = time.time()
-for epoch in range(args.num_epochs):
+for epoch in range(args.first_epoch, args.num_epochs):
     print(f"Epoch {epoch}")
     # if epoch > 0 and epoch % args.evaluation_freq == 0:
     #     cgc.assert_computation_graph_same_size(loss, next(iter(models_dict.items()))[1].named_parameters())
@@ -212,6 +231,8 @@ for epoch in range(args.num_epochs):
             # eval loop
         model.eval()
         ipdf.eval()
+        log_likelihoods = []
+        angle_errors = []
         for batch_ndx, batch in enumerate(val_dloader):
             if batch_ndx * args.batch_size_eval > args.max_val_samples:
                 break
@@ -232,22 +253,34 @@ for epoch in range(args.num_epochs):
                 # Take likelihood of closest point to ground truth.
                 closest = ipdf_train.find_closest_rotations(queries[0], gt_pose)
                 pdf_closest = pdf[torch.arange(pdf.shape[0]), closest]
-                val_log_likelihood = torch.log(pdf_closest).mean().item()
+                log_likelihoods.append(torch.log(pdf_closest).mean().item())
+
+                # If we have to output a single rotation prediction,
+                # this is it.
+                # queries is (1, num_queries, 3, 3)
+                # pdf is (bs, num_queries) -> argmax is (bs,)
+                mode = queries[0][pdf.argmax(axis=-1)]
+                # Compute distance between argmax pdf and gt pose.
+                # This is innacurate in case of symmetric objects!
+                angle_errors.append(
+                    ipdf_train.compute_angle_error(mode, gt_pose).mean().item())
 
                 # Save figures for elements of the first batch.
                 if batch_ndx == 0:
-                    for i in range(3):
+                    for i in range(args.batch_size_eval):
                       ipdf_train.save_figure(
-                          path=f'/tmp/eval_ipdf_{i}_e{epoch}_b{batch_ndx:04d}.png',
+                          path=f'/tmp/eval_ipdf_{i}_e{epoch:03d}_b{batch_ndx:04d}.png',
                           queries=queries[0].cpu(),
                           pmf=pmf[i].cpu(),
-                          gt=gt_pose[i].cpu())
+                          gt=gt_pose[i].cpu(),
+                          pred=mode[i].cpu())
 
-            print(f"elapsed {time.time()-start:.2f}s. "
-                  f"epoch {epoch}. step {batch_ndx}/{len(val_dloader)}. "
-                  f"val log likelihood: {val_log_likelihood:.2f}")
+        print(f"{args.run_id}: elapsed {time.time()-start:.2f}s, "
+              f"epoch {epoch}, step {batch_ndx}/{len(val_dloader)}. "
+              f"val log likelihood: {np.mean(log_likelihoods):.2f}, "
+              f"val angle error: {np.degrees(np.mean(angle_errors)):.2f} deg.")
 
-            val_diag_dict = dict()
+            # val_diag_dict = dict()
 
             # wandb_dict = {"val/total_loss": val_loss.data.cpu().numpy(),
             #                   "val/total_iteration": total_iteration,
@@ -269,12 +302,14 @@ for epoch in range(args.num_epochs):
                    opt=optimizer.state_dict())
         # if args.enable_scheduler:
         #     dic['scheduler_get_lr'] = scheduler.get_lr()
-        torch.save(dic, f'/tmp/bandu_ipdf_ckpt_e{epoch}')
+        torch.save(dic, f'/tmp/bandu_ipdf_ckpt_{args.run_id}_e{epoch}')
 
         # print("ln177 checkpoint path")
+
         # print(os.path.join(wandb.run.dir, f"checkpoint{epoch}"))
 
     # for iter_ in range(100):
+    running_loss = []
     for batch_ndx, batch in enumerate(train_dloader):
         if batch_ndx * args.batch_size_train > args.max_train_samples_per_epoch:
             break
@@ -297,14 +332,18 @@ for epoch in range(args.num_epochs):
         pdf, pmf = ipdf.compute_pdf(feature, queries)
         loss = -torch.log(pdf[:, -1]).mean()
 
-        print(f"elapsed {time.time()-start:.2f}s. "
-              f"epoch {epoch}. step {batch_ndx}/{len(train_dloader)}. "
-              f"train loss: {loss:.2f}.")
         loss.backward()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-
+        # TODO: CHECKME: removed grad clipping.
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
+
+        running_loss.append(loss.item())
+        if batch_ndx % 100 == 0:
+            print(f"{args.run_id}: elapsed {time.time()-start:.2f}s. "
+                  f"epoch {epoch}. step {batch_ndx}/{len(train_dloader)}. "
+                  f"train loss: {np.mean(running_loss):.2f}.")
+            running_loss = []
+            # TODO: also save images
 
         # if args.enable_scheduler:
         #     scheduler.step()
