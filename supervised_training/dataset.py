@@ -2,11 +2,14 @@ import torch
 import numpy as np
 import tqdm
 from torch.utils.data import Dataset
+from PIL import Image
+import os
+from pathlib import Path
+import sys
 import pandas as pd
 from bandu.utils import vis_util, mesh_util
 import open3d as o3d
-from supervised_training.utils.env_evaluation_util import get_bti_from_rotated
-import os
+from supervised_training.utils.env_evaluation_util import get_bti, get_bti_from_rotated
 from supervised_training.utils.pointcloud_util import *
 
 
@@ -28,8 +31,10 @@ def read_data_dir(samples_dir):
     :return:
     """
     assert samples_dir[-1] != "/"
+    # object_dirs = absolute_dir_paths(Path(data_working_dir) / "samples")
     object_dirs = absolute_dir_paths(samples_dir)
 
+    # column_names = ["filepath", "date", "take", "posX", "posY", "posZ", "quatX", "quatY", "quatZ", "quatW"]
     column_names = ["file_path", "object_name", "sample_idx"]
     df = pd.DataFrame(columns=column_names)
 
@@ -39,6 +44,8 @@ def read_data_dir(samples_dir):
         object_name = os.path.basename(os.path.normpath(object_dir_path))
         object_names = [object_name for _ in range(len(sample_file_paths))]
 
+        print("ln49 sfp")
+        # print(sample_file_paths)
         sample_idxs = [int(os.path.basename(os.path.normpath(sfp)).split(".")[0]) for sfp in sample_file_paths]
         sample_df = pd.DataFrame(zip(sample_file_paths, object_names, sample_idxs),
                                  columns=column_names)
@@ -47,6 +54,8 @@ def read_data_dir(samples_dir):
 
     return df
 
+
+# pd.set_option("display.max_rows", None, "display.max_columns", None)
 
 class PointcloudDataset(Dataset):
     def __init__(self,
@@ -64,7 +73,9 @@ class PointcloudDataset(Dataset):
                  center_fps_pc=False,
                  linear_search=True,
                  max_frac_threshold=.1,
-                 randomize_z_canonical=True):
+                 dont_make_btb=False,
+                 randomize_z_canonical=False,
+                 further_downsample_frac=None):
         self.data_df = read_data_dir(data_dir)
         self.data_dir = data_dir
         self.scale_aug = scale_aug
@@ -82,7 +93,9 @@ class PointcloudDataset(Dataset):
 
         self.linear_search = linear_search
         self.max_frac_threshold = max_frac_threshold
+        self.dont_make_btb = dont_make_btb
         self.randomize_z_canonical = randomize_z_canonical
+        self.further_downsample_frac = further_downsample_frac
 
     def __len__(self):
         # returns number of rows in dataframe
@@ -95,27 +108,32 @@ class PointcloudDataset(Dataset):
         fp = df_row['file_path']
         main_dict = torch.load(fp)
 
-        farthest_point_sampled_pointcloud = main_dict['rotated_pointcloud']
 
+        # fps_pc = get_farthest_point_sampled_pointcloud(main_dict['rotated_pointcloud'],
+        #                                                                         2048)
+
+        farthest_point_sampled_pointcloud = main_dict['rotated_pointcloud']
+        if self.further_downsample_frac:
+            farthest_point_sampled_pointcloud = farthest_point_sampled_pointcloud[np.random.choice(farthest_point_sampled_pointcloud.shape[0], 512, replace=False)]
         if self.center_fps_pc:
             farthest_point_sampled_pointcloud = farthest_point_sampled_pointcloud - main_dict['position']
 
         # augmentations and generations
         M = np.eye(3)
 
-        # augmentation 1: scale
+        # aug 1: scale
         if self.scale_aug == "xyz":
             # fps_before = fps_pc.copy()
             _, M_scale = scale_aug_pointcloud(farthest_point_sampled_pointcloud,
-                                            main_dict['rotated_quat'],
-                                            self.max_z_scale, self.min_z_scale)
+                                              main_dict['rotated_quat'],
+                                              self.max_z_scale, self.min_z_scale)
 
             M = M_scale @ M
         else:
             M_scale = np.eye(3)
 
 
-        # augmentation 2: shear
+        # aug 2: shear
         if self.shear_aug == "xy":
             _, M_tmp = shear_aug_pointcloud(farthest_point_sampled_pointcloud,
                                             main_dict['rotated_quat'],
@@ -193,6 +211,8 @@ class PointcloudDataset(Dataset):
         else:
             fps_normals_transformed = None
 
+        # return (before_aug_fps_pc, resultant_quat, fps_pc, fps_normals_transformed)
+
         # add object dimension for solo object
         main_dict['rotated_pointcloud'] = np.expand_dims(farthest_point_sampled_pointcloud, axis=0).astype(float)
 
@@ -200,19 +220,18 @@ class PointcloudDataset(Dataset):
         #                        'display.max_columns', None,
         #                        'display.precision', 3,
         #                        ):
-            # print(df_row)
-            # print(df_row['file_path'])
+        #     print(df_row)
+        #     print(df_row['file_path'])
 
-        main_dict['bottom_thresholded_boolean'] = get_bti_from_rotated(farthest_point_sampled_pointcloud,
-                                        resultant_quat, self.threshold_frac, self.linear_search,
-                                                                       max_z=main_dict['canonical_max_height']*M_scale[2, 2],
-                                                                       min_z=main_dict['canonical_min_height']*M_scale[2, 2],
-                                                                       max_frac_threshold=self.max_frac_threshold).astype(float)
+        if not self.dont_make_btb:
+            main_dict['bottom_thresholded_boolean'] = get_bti_from_rotated(farthest_point_sampled_pointcloud,
+                                                                           resultant_quat, self.threshold_frac, self.linear_search,
+                                                                           max_z=main_dict['canonical_max_height']*M_scale[2, 2],
+                                                                           min_z=main_dict['canonical_min_height']*M_scale[2, 2],
+                                                                           max_frac_threshold=self.max_frac_threshold).astype(float)
+            assert np.sum(1-main_dict['bottom_thresholded_boolean']) >= 15, print(np.sum(1-main_dict['bottom_thresholded_boolean']))
 
-        # import pdb
-        # pdb.set_trace()
         # 1-btb because 0s are contact points, 1s are background points
-        assert np.sum(1-main_dict['bottom_thresholded_boolean']) >= 15, print(np.sum(1-main_dict['bottom_thresholded_boolean']))
 
         if self.randomize_z_canonical:
             canonical_quat = R.from_euler("z", np.random.uniform(0, 2*np.pi)).as_quat()

@@ -59,6 +59,8 @@ parser.add_argument('--no_linear_search', action='store_false', help='Use linear
 parser.add_argument('--threshold_frac',type=float, default=.02, help='Fraction of points to use for plane label generation')
 parser.add_argument('--max_frac_threshold', type=float, default=.1)
 parser.add_argument('--randomize_z_canonical', action='store_true')
+parser.add_argument('--dont_make_btb', action='store_true')
+
 args = parser.parse_args()
 import torch
 
